@@ -46,14 +46,17 @@ impl VRCLog {
         match message {
             Message::NewLog(log) => {
                 self.logs.push_front(log);
-                
-                // 【功能3】因为 push_front 会把所有现有日志的全局索引向后推1位，
-                // 所以我们必须把已展开的行号也全部 +1，这样才能保持追踪！
-                self.expanded_rows = self
+
+                let len = self.logs.len();
+                if len > 10000 {
+                    self.logs.truncate(10000);
+                } else {
+                    self.expanded_rows = self
                     .expanded_rows
                     .iter()
                     .map(|&idx| idx + 1)
                     .collect();
+                }
 
                 self.apply_filters();
             }
@@ -117,9 +120,6 @@ impl VRCLog {
                 .cmp(&self.logs[a].timestamp)
                 .then_with(|| b.cmp(&a))
         });
-
-        // 【功能3】此处删除了 self.expanded_rows.clear()
-        // 这样即使改变了筛选条件，原本展开的日志依然保持展开状态
     }
 
     fn max_pages(&self) -> usize {
