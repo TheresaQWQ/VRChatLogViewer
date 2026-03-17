@@ -1,0 +1,5 @@
+{
+  "file_count": 2,
+  "initial_logs_per_file": 5000,
+  "max_cached_logs": 10000
+}

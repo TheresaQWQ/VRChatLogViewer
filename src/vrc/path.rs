@@ -35,8 +35,8 @@ fn get_steam_library_with_app_id(steam_path: &PathBuf, app_id: &str) -> Option<P
             if let Some(start) = line.find("\"path\"") {
                 let remaining = &line[start + 6..];
                 // 找到引号包围的路径
-                if let Some(quote_start) = remaining.find('"') {
-                    if let Some(quote_end) = remaining[quote_start + 1..].find('"') {
+                if let Some(quote_start) = remaining.find('"')
+                    && let Some(quote_end) = remaining[quote_start + 1..].find('"') {
                         let lib_path = &remaining[quote_start + 1..quote_start + 1 + quote_end];
                         let full_path = PathBuf::from(lib_path).join("steamapps");
                         if full_path.join("common").exists() {
@@ -47,7 +47,6 @@ fn get_steam_library_with_app_id(steam_path: &PathBuf, app_id: &str) -> Option<P
                             }
                         }
                     }
-                }
             }
         }
     }

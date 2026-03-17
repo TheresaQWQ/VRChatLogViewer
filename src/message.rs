@@ -9,6 +9,12 @@ pub enum Message {
     CopyToClipboard(String),
     NextPage,
     PrevPage,
+    OpenSettings,
+    CloseSettings,
+    SaveSettings,
+    SettingsFileCountChanged(String),
+    SettingsInitialLogsChanged(String),
+    SettingsMaxCachedChanged(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
