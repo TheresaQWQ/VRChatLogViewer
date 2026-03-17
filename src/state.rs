@@ -4,8 +4,9 @@ use crate::vrc;
 use iced::widget::{
     button, container, pick_list, scrollable, text_input, Column, Container, Row, Text,
 };
-use iced::{Element, Length, Padding, Subscription, Task, alignment};
-use std::collections::{HashSet, VecDeque};
+use iced::{alignment, Element, Length, Padding, Subscription, Task};
+use std::collections::{BTreeSet, HashSet};
+use std::rc::Rc;
 
 // 辅助函数：安全地截断过长的字符串 (按字符而不是字节截断，防止中文字符崩溃)
 fn truncate_text(s: &str, max_chars: usize) -> String {
@@ -17,21 +18,57 @@ fn truncate_text(s: &str, max_chars: usize) -> String {
     }
 }
 
+// 包装器：为日志分配唯一 ID，并配置专供 BTreeSet 使用的排序规则
+#[derive(Clone, Debug)]
+pub struct LogEntry {
+    pub id: usize,
+    pub item: Rc<vrc::parser::LogItem>,
+}
+
+impl PartialEq for LogEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for LogEntry {}
+
+impl PartialOrd for LogEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LogEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // 首先按时间戳倒序排列 (最新的日志在最前面)
+        let cmp = other.item.timestamp.cmp(&self.item.timestamp);
+        if cmp == std::cmp::Ordering::Equal {
+            // 如果时间戳相同(同一秒发生的日志)，按 ID 倒序排列确保不会被 BTreeSet 覆盖，且新日志靠前
+            other.id.cmp(&self.id)
+        } else {
+            cmp
+        }
+    }
+}
+
 pub struct VRCLog {
-    logs: VecDeque<vrc::parser::LogItem>,
-    filtered_indices: Vec<usize>,
+    logs: BTreeSet<LogEntry>,       // 使用平衡二叉树存储，实现自动排序
+    filtered_logs: Vec<LogEntry>,   // 存储过滤后的日志引用 (通过 Rc 克隆，开销极低)
+    next_id: usize,                 // 唯一递增标识符
     filter_text: String,
     filter_level: Option<LogLevel>,
     current_page: usize,
     items_per_page: usize,
-    expanded_rows: HashSet<usize>,
+    expanded_rows: HashSet<usize>,  // 现在直接存储日志的唯一 id，不再需要处理索引偏移
 }
 
 impl Default for VRCLog {
     fn default() -> Self {
         Self {
-            logs: VecDeque::new(),
-            filtered_indices: Vec::new(),
+            logs: BTreeSet::new(),
+            filtered_logs: Vec::new(),
+            next_id: 0,
             filter_text: String::new(),
             filter_level: None,
             current_page: 0,
@@ -45,17 +82,19 @@ impl VRCLog {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::NewLog(log) => {
-                self.logs.push_front(log);
+                let entry = LogEntry {
+                    id: self.next_id,
+                    item: Rc::new(log),
+                };
+                self.next_id += 1;
+                
+                // BTreeSet 插入时 $O(\log N)$ 自动排序
+                self.logs.insert(entry);
 
-                let len = self.logs.len();
-                if len > 10000 {
-                    self.logs.truncate(10000);
-                } else {
-                    self.expanded_rows = self
-                    .expanded_rows
-                    .iter()
-                    .map(|&idx| idx + 1)
-                    .collect();
+                if self.logs.len() > 10000 {
+                    // 因为我们的 Ord 是倒序(最新的被视为最小放在前面)
+                    // 所以树中的最后一个元素(最大的)就是最旧的日志
+                    self.logs.pop_last();
                 }
 
                 self.apply_filters();
@@ -73,23 +112,21 @@ impl VRCLog {
             Message::NextPage => {
                 if self.current_page < self.max_pages() {
                     self.current_page += 1;
-                    self.apply_filters();
                 }
             }
             Message::PrevPage => {
                 if self.current_page > 0 {
                     self.current_page -= 1;
-                    self.apply_filters();
                 }
             }
-            Message::ToggleExpand(global_idx) => {
-                if self.expanded_rows.contains(&global_idx) {
-                    self.expanded_rows.remove(&global_idx);
+            Message::ToggleExpand(log_id) => {
+                // 直接使用 log_id 追踪展开状态，不再依赖索引
+                if self.expanded_rows.contains(&log_id) {
+                    self.expanded_rows.remove(&log_id);
                 } else {
-                    self.expanded_rows.insert(global_idx);
+                    self.expanded_rows.insert(log_id);
                 }
             }
-            // 【功能2】处理复制到剪贴板的事件
             Message::CopyToClipboard(text) => {
                 return iced::clipboard::write(text);
             }
@@ -98,41 +135,44 @@ impl VRCLog {
     }
 
     fn apply_filters(&mut self) {
-        self.filtered_indices.clear();
-        for (idx, log) in self.logs.iter().enumerate() {
-            let matches_text = self.filter_text.is_empty()
-                || log
-                    .message
-                    .to_lowercase()
-                    .contains(&self.filter_text.to_lowercase());
+        self.filtered_logs.clear();
+        
+        // 将 filter_text 预先转为小写，避免在循环内部重复分配和转换，提升性能
+        let filter_lower = self.filter_text.to_lowercase();
+
+        // 遍历 BTreeSet (天然已经是按时间倒序排列的)
+        for entry in &self.logs {
+            let matches_text = filter_lower.is_empty()
+                || entry.item.message.to_lowercase().contains(&filter_lower);
+
             let matches_level = match self.filter_level {
                 None | Some(LogLevel::ALL) => true,
-                Some(t) => log.level == t.to_string(),
+                Some(t) => entry.item.level == t.to_string(),
             };
+
             if matches_text && matches_level {
-                self.filtered_indices.push(idx);
+                // 因为使用了 Rc，这里的 clone 只是增加引用计数，极其轻量
+                self.filtered_logs.push(entry.clone());
             }
         }
-
-        self.filtered_indices.sort_by(|&a, &b| {
-            self.logs[b]
-                .timestamp
-                .cmp(&self.logs[a].timestamp)
-                .then_with(|| b.cmp(&a))
-        });
+        // [移除原有排序逻辑] - 不再需要昂贵的 $O(N \log N)$ 排序
     }
 
     fn max_pages(&self) -> usize {
-        self.filtered_indices.len().saturating_sub(1) / self.items_per_page
+        self.filtered_logs.len().saturating_sub(1) / self.items_per_page
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let total_logs = self.logs.len();
-        let filtered_count = self.filtered_indices.len();
+        let filtered_count = self.filtered_logs.len();
 
         let start = self.current_page * self.items_per_page;
         let end = (start + self.items_per_page).min(filtered_count);
-        let page_indices = &self.filtered_indices[start..end];
+        let page_entries = if filtered_count == 0 {
+            &[]
+        } else {
+            &self.filtered_logs[start..end]
+        };
 
         // Header Styling
         let header: Element<Message> = Container::new(
@@ -158,12 +198,13 @@ impl VRCLog {
         .into();
 
         // Table rows
-        let table_rows: Vec<Element<Message>> = page_indices
+        let table_rows: Vec<Element<Message>> = page_entries
             .iter()
             .enumerate()
-            .map(|(local_idx, &global_idx)| {
-                let log = &self.logs[global_idx];
-                let is_expanded = self.expanded_rows.contains(&global_idx);
+            .map(|(local_idx, entry)| {
+                let log = &entry.item;
+                let log_id = entry.id;
+                let is_expanded = self.expanded_rows.contains(&log_id);
 
                 // Level colors
                 let level_color = match log.level.to_lowercase().as_str() {
@@ -174,7 +215,7 @@ impl VRCLog {
                     _ => iced::Color::WHITE,
                 };
 
-                // 【功能1】在非展开的列表视图中，截断过长的 Message (比如超过100个字符)
+                // 【功能1】截断过长的 Message
                 let display_message = truncate_text(&log.message, 100);
 
                 let main_row = Row::new()
@@ -204,7 +245,7 @@ impl VRCLog {
                     .align_y(alignment::Vertical::Center);
 
                 let clickable_row = button(main_row)
-                    .on_press(Message::ToggleExpand(global_idx))
+                    .on_press(Message::ToggleExpand(log_id))
                     .padding(0)
                     .width(Length::Fill)
                     .style(move |theme: &iced::Theme, status| {
@@ -251,26 +292,25 @@ impl VRCLog {
                         .padding(Padding { top: 0.0, right: 12.0, bottom: 0.0, left: 0.0 })
                         .align_y(alignment::Vertical::Center);
 
-                    let details_row =
-                        Container::new(
-                            Column::new()
-                                .push(header_row)
-                                .push(Text::new(full_content).size(13).width(Length::Fill))
-                                .spacing(8)
-                        )
-                        .width(Length::Fill)
-                        .padding(12)
-                        .style(|_theme| container::Style {
-                            background: Some(iced::Background::Color(iced::Color::from_rgba(
-                                0.0, 0.0, 0.0, 0.2,
-                            ))),
-                            border: iced::Border {
-                                radius: 4.0.into(),
-                                color: iced::Color::from_rgba(0.5, 0.5, 0.5, 0.3),
-                                width: 1.0,
-                            },
-                            ..Default::default()
-                        });
+                    let details_row = Container::new(
+                        Column::new()
+                            .push(header_row)
+                            .push(Text::new(full_content).size(13).width(Length::Fill))
+                            .spacing(8)
+                    )
+                    .width(Length::Fill)
+                    .padding(12)
+                    .style(|_theme| container::Style {
+                        background: Some(iced::Background::Color(iced::Color::from_rgba(
+                            0.0, 0.0, 0.0, 0.2,
+                        ))),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            color: iced::Color::from_rgba(0.5, 0.5, 0.5, 0.3),
+                            width: 1.0,
+                        },
+                        ..Default::default()
+                    });
 
                     Column::new()
                         .push(clickable_row)
