@@ -27,7 +27,7 @@ pub fn view_logs<'a>(
         &filtered_logs[start..end]
     };
 
-    let header: Element<Message> = Container::new(
+    let table_header = Container::new(
         Row::new()
             .push(Text::new("Timestamp").width(Length::FillPortion(2)))
             .push(Text::new("Level").width(Length::FillPortion(2)))
@@ -46,8 +46,7 @@ pub fn view_logs<'a>(
             ..Default::default()
         },
         ..Default::default()
-    })
-    .into();
+    });
 
     let table_rows: Vec<Element<Message>> = page_entries
         .iter()
@@ -178,37 +177,34 @@ pub fn view_logs<'a>(
         })
         .collect();
 
-    let table: Element<Message> = Column::new()
-        .push(header)
-        .extend(table_rows)
-        .spacing(4)
-        .width(Length::Fill)
-        .into();
+    let table_rows_scrollable = scrollable(Column::new().extend(table_rows));
+
+    let table = Column::new()
+        .push(table_header)
+        .push(table_rows_scrollable)
+        .spacing(4);
 
     // 顶部过滤器和设置按钮
     let filter_input = text_input("Search by message...", filter_text)
         .on_input(Message::FilterTextChanged)
-        .padding(8)
-        .width(Length::FillPortion(3));
+        .padding(8);
 
     let filter_type = pick_list(LogLevel::all_levels(), filter_level.as_ref(), |t| {
         Message::FilterLevelChanged(Some(t))
     })
     .placeholder("Filter by type...")
-    .padding(8)
-    .width(Length::FillPortion(1));
+    .padding(8);
 
     let settings_btn = button("⚙ Settings")
         .on_press(Message::OpenSettings)
         .padding(8);
 
-    let filters: Element<Message> = Row::new()
-        .push(filter_input)
-        .push(filter_type)
+    let filters = Row::new()
+        .push(filter_input.width(Length::FillPortion(3)))
+        .push(filter_type.width(Length::FillPortion(1)))
         .push(settings_btn)
         .spacing(15)
-        .align_y(alignment::Vertical::Center)
-        .into();
+        .align_y(alignment::Vertical::Center);
 
     // 底部翻页
     let max_pages = filtered_logs.len().saturating_sub(1) / items_per_page;
@@ -237,17 +233,16 @@ pub fn view_logs<'a>(
     .width(Length::Fill)
     .align_x(alignment::Horizontal::Center);
 
-    let pagination: Element<Message> = Row::new()
+    let pagination = Row::new()
         .push(prev_btn)
         .push(page_info)
         .push(next_btn)
         .spacing(10)
-        .align_y(alignment::Vertical::Center)
-        .into();
+        .align_y(alignment::Vertical::Center);
 
     Column::new()
         .push(filters)
-        .push(scrollable(Container::new(table).width(Length::Fill)).height(Length::Fill))
+        .push(table.width(Length::Fill).height(Length::Fill))
         .push(pagination)
         .spacing(20)
         .padding(20)
