@@ -27,7 +27,7 @@ pub fn view_logs<'a>(
         &filtered_logs[start..end]
     };
 
-    let header: Element<Message> = Container::new(
+    let table_header = Container::new(
         Row::new()
             .push(Text::new("Timestamp").width(Length::FillPortion(2)))
             .push(Text::new("Level").width(Length::FillPortion(2)))
@@ -178,12 +178,12 @@ pub fn view_logs<'a>(
         })
         .collect();
 
-    let table: Element<Message> = Column::new()
-        .push(header)
-        .extend(table_rows)
-        .spacing(4)
-        .width(Length::Fill)
-        .into();
+    let table_rows_scrollable = scrollable(Column::new().extend(table_rows));
+
+    let table = Column::new()
+        .push(table_header)
+        .push(table_rows_scrollable)
+        .spacing(4);
 
     // 顶部过滤器和设置按钮
     let filter_input = text_input("Search by message...", filter_text)
@@ -247,7 +247,7 @@ pub fn view_logs<'a>(
 
     Column::new()
         .push(filters)
-        .push(scrollable(Container::new(table).width(Length::Fill)).height(Length::Fill))
+        .push(table.width(Length::Fill).height(Length::Fill))
         .push(pagination)
         .spacing(20)
         .padding(20)
