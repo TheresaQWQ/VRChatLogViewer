@@ -123,11 +123,7 @@ pub fn view_logs<'a>(
                 });
 
             if is_expanded {
-                let full_content = if log.details.trim().is_empty() {
-                    log.message.clone()
-                } else {
-                    format!("{}\n\n{}", log.message, log.details)
-                };
+                let full_content = log.raw.clone();
 
                 let copy_btn = button(Text::new("Copy").size(12))
                     .padding([4, 12])
@@ -145,7 +141,7 @@ pub fn view_logs<'a>(
                     })
                     .align_y(alignment::Vertical::Center);
 
-                let details_row = Container::new(
+                let full_log_row = Container::new(
                     Column::new()
                         .push(header_row)
                         .push(Text::new(full_content).size(13).width(Length::Fill))
@@ -167,7 +163,7 @@ pub fn view_logs<'a>(
 
                 Column::new()
                     .push(clickable_row)
-                    .push(details_row)
+                    .push(full_log_row)
                     .spacing(2)
                     .width(Length::Fill)
                     .into()

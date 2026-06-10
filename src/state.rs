@@ -163,7 +163,7 @@ impl VRCLog {
 
         for entry in &self.logs {
             let matches_text = filter_lower.is_empty()
-                || entry.item.message.to_lowercase().contains(&filter_lower);
+                || entry.item.raw.to_lowercase().contains(&filter_lower);
 
             let matches_level = match self.filter_level {
                 None | Some(LogLevel::ALL) => true,
