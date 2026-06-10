@@ -6,11 +6,19 @@ use tokio::{
 };
 
 #[derive(Debug, Clone)]
+/// LogItem represents a single log entry parsed from the log file. 
+/// Expected log line format: "YYYY.MM.DD HH:MM:SS LEVEL      - [TYPE] Message details..."
+/// Expected log line format: "YYYY.MM.DD HH:MM:SS LEVEL      - Message details..."
 pub struct LogItem {
+    // YYYY.MM.DD HH:MM:SS
     pub timestamp: String,
+    // "Debug", "Warning", "Error", etc.
     pub level: String,
+    // extracted from the message if it starts with [TYPE], otherwise "NO_TYPE"
     pub r#type: String,
+    // the main message of the log, usually the first line after the timestamp and log level
     pub message: String,
+    // the details of the log, usually the subsequent lines after the main message for multi-line logs; for single-line logs, this will be an empty string
     pub details: String,
 }
 
@@ -183,25 +191,49 @@ impl LogParser {
             };
 
             // 反序解析当前块
+            let mut log_content_buffer: Vec<String> = Vec::new();
+
             for line in lines.into_iter().rev() {
                 let line = String::from_utf8_lossy(line).to_string();
                 if line.is_empty() {
                     continue;
                 }
 
-                if let Some(log_item) = Self::parse_line_to_log(&line) {
+                if let Some(mut log_item) = Self::parse_line_to_log(&line) {
+
+                    // if the log line has a valid timestamp
+                    // it is treated as the beginning of a log entry
+
+                    // if the message of the log item is empty, pop the last line in the log_content_buffer as the message of the log item
+                    if log_item.message.trim().is_empty() {
+                        // pop the last line in the log_content_buffer as the message of the log item
+                        if let Some(message) = log_content_buffer.pop() {
+                            log_item.message = message;
+                        }
+                    }
+
+                    // concat the log_content_buffer with new lines in reverse order as the details of the log item
+                    let mut details = String::new();
+                    for content in log_content_buffer.iter().rev() {
+                        details = format!("{}\n{}", content, details);
+                    }
+                    log_item.details = details.trim().to_string();
+                    
+                    // clear the log_content_buffer for the next log entry
+                    log_content_buffer.clear();
+                    
+                    // push the complete log entry to the logs vector
                     logs.push(log_item);
+
+                    // stop parsing if we have reached the maximum number of logs
                     if logs.len() >= MAX_LOGS {
                         break;
                     }
-                } else if let Some(last) = logs.last_mut() {
-                    // 多行日志拼接
+                } else {
+                    // if the line is not a new log entry, push it to the log_content_buffer
+                    // the beginning of the corresponding log entry/beginning is expected to be appeared latter in the reverse parsing
                     let line = line.trim_end();
-                    if last.message.trim().is_empty() {
-                        last.message = line.to_owned();
-                    } else {
-                        last.details = format!("{}\n{}", last.details, line);
-                    }
+                    log_content_buffer.push(line.to_string());
                 }
             }
         }
