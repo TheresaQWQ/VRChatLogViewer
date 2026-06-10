@@ -7,8 +7,8 @@ use tokio::{
 
 #[derive(Debug, Clone)]
 /// LogItem represents a single log entry parsed from the log file. 
-/// Expected log line format: "YYYY.MM.DD HH:MM:SS LEVEL      - [TYPE] Message details..."
-/// Expected log line format: "YYYY.MM.DD HH:MM:SS LEVEL      - Message details..."
+/// Expected log line format: "YYYY.MM.DD HH:MM:SS LEVEL      - [TYPE] Message..."
+/// Expected log line format: "YYYY.MM.DD HH:MM:SS LEVEL      - Message..."
 pub struct LogItem {
     // YYYY.MM.DD HH:MM:SS
     pub timestamp: String,
@@ -18,8 +18,6 @@ pub struct LogItem {
     pub r#type: String,
     // the main message of the log, usually the first line after the timestamp and log level
     pub message: String,
-    // the details of the log, usually the subsequent lines after the main message for multi-line logs; for single-line logs, this will be an empty string
-    pub details: String,
     // the original log line
     pub raw: String,
 }
@@ -222,13 +220,6 @@ impl LogParser {
                             log_item.message = message;
                         }
                     }
-
-                    // concat the log_content_buffer with new lines in reverse order as the details of the log item
-                    let mut details = String::new();
-                    for content in log_content_buffer.iter().rev() {
-                        details = format!("{}\n{}", content, details);
-                    }
-                    log_item.details = details.trim().to_string();
                     
                     // clear the log_content_buffer for the next log entry
                     log_content_buffer.clear();
@@ -268,7 +259,6 @@ impl LogParser {
             level: "".to_string(),
             r#type: "".to_string(),
             message: "".to_string(),
-            details: "".to_string(),
             raw: "".to_string(),
         };
 
@@ -289,14 +279,11 @@ impl LogParser {
                 current = log_item;
             } else if !current.timestamp.is_empty() {
                 // if the current line is not a new log entry and there is a valid current log entry
-                // treat it as part of the details of the current log entry
+                // update current log entry
                 let line = line.trim_end();
                 if current.message.trim().is_empty() {
-                    // if the message is empty, treat the current line as the message; otherwise, treat it as details
+                    // if the message is empty, treat the current line as the message
                     current.message = line.to_owned();
-                } else {
-                    // if the message is not empty, append the current line to the details
-                    current.details = format!("{}\n{}", current.details, line);
                 }
                 current.raw = format!("{}\n{}", current.raw, line);
             }
@@ -325,16 +312,13 @@ impl LogParser {
 
         // check if the rest contains a log level; return None if not
         if let Some((level, msg)) = rest.split_once("- ") {
-            // create a LogItem with the parsed timestamp, log level
-            // with prefilled type, message and details
-            // details will always be empty string for a single line log,
-            // but for multi-line logs, the first line will be treated as message and the rest will be treated as details
+            // create a LogItem with the parsed timestamp, log level and raw
+            // with prefilled type and message
             let mut log_item = LogItem {
                 timestamp,
                 level: level.trim().to_string(),
                 r#type: "NO_TYPE".to_string(),
                 message: "".to_string(),
-                details: "".to_string(),
                 raw: line.to_string(),
             };
             

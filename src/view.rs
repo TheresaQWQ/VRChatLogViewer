@@ -141,7 +141,7 @@ pub fn view_logs<'a>(
                     })
                     .align_y(alignment::Vertical::Center);
 
-                let details_row = Container::new(
+                let full_log_row = Container::new(
                     Column::new()
                         .push(header_row)
                         .push(Text::new(full_content).size(13).width(Length::Fill))
@@ -163,7 +163,7 @@ pub fn view_logs<'a>(
 
                 Column::new()
                     .push(clickable_row)
-                    .push(details_row)
+                    .push(full_log_row)
                     .spacing(2)
                     .width(Length::Fill)
                     .into()
