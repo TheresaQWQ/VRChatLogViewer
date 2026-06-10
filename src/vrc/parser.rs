@@ -20,6 +20,8 @@ pub struct LogItem {
     pub message: String,
     // the details of the log, usually the subsequent lines after the main message for multi-line logs; for single-line logs, this will be an empty string
     pub details: String,
+    // the original log line
+    pub raw: String,
 }
 
 impl Ord for LogItem {
@@ -204,6 +206,15 @@ impl LogParser {
                     // if the log line has a valid timestamp
                     // it is treated as the beginning of a log entry
 
+                    // concat the log_content_buffer with new lines in reverse order and append as the raw content of the log item
+                    let mut raw_content = String::new();
+                    for content in log_content_buffer.iter() {
+                        raw_content = format!("{}\n{}", content, raw_content);
+                    }
+                    raw_content = format!("{}\n{}", log_item.raw.clone(), raw_content);
+                    log_item.raw = raw_content;
+
+
                     // if the message of the log item is empty, pop the last line in the log_content_buffer as the message of the log item
                     if log_item.message.trim().is_empty() {
                         // pop the last line in the log_content_buffer as the message of the log item
@@ -248,35 +259,50 @@ impl LogParser {
     fn parse_lines(buffer: &[u8]) -> Result<Vec<LogItem>, String> {
         let lines = buffer.split(|b| *b == b'\n');
         let mut logs: Vec<LogItem> = Vec::new();
+
+        // pre-allocate a LogItem so the parse can fill in the fields
+        // if the first line is a beginning of a log entry, it will be replaced by the parsed log item
+        // if not, it will be discarded because of the empty timestamp
         let mut current = LogItem {
             timestamp: "".to_string(),
             level: "".to_string(),
             r#type: "".to_string(),
             message: "".to_string(),
             details: "".to_string(),
+            raw: "".to_string(),
         };
 
         for line in lines {
             let line = String::from_utf8_lossy(line).to_string();
             if line.is_empty() {
+                current.raw = format!("{}\n", current.raw);
                 continue;
             }
 
             if let Some(log_item) = Self::parse_line_to_log(&line) {
+                // if the current line is a new log entry
+                // push the previous log entry to the logs vector if it has a valid timestamp, and
+                // start a new log entry with the current line
                 if !current.timestamp.is_empty() {
                     logs.push(current);
                 }
                 current = log_item;
             } else if !current.timestamp.is_empty() {
+                // if the current line is not a new log entry and there is a valid current log entry
+                // treat it as part of the details of the current log entry
                 let line = line.trim_end();
                 if current.message.trim().is_empty() {
+                    // if the message is empty, treat the current line as the message; otherwise, treat it as details
                     current.message = line.to_owned();
                 } else {
+                    // if the message is not empty, append the current line to the details
                     current.details = format!("{}\n{}", current.details, line);
                 }
+                current.raw = format!("{}\n{}", current.raw, line);
             }
         }
 
+        // push the last log entry if it has a valid timestamp
         if !current.timestamp.is_empty() {
             logs.push(current);
         }
@@ -284,7 +310,9 @@ impl LogParser {
         Ok(logs.into_iter().rev().collect())
     }
 
+    /// parse a single line with contains a timestamp, a log level, and a message into LogItem
     fn parse_line_to_log(line: &str) -> Option<LogItem> {
+        // check if the line starts with a timestamp; return None if not
         if line.len() < 19
             || line.as_bytes().get(4) != Some(&b'.')
             || line.as_bytes().get(10) != Some(&b' ')
@@ -295,15 +323,22 @@ impl LogParser {
         let timestamp = line[0..19].to_string();
         let rest = line[19..].trim();
 
+        // check if the rest contains a log level; return None if not
         if let Some((level, msg)) = rest.split_once("- ") {
+            // create a LogItem with the parsed timestamp, log level
+            // with prefilled type, message and details
+            // details will always be empty string for a single line log,
+            // but for multi-line logs, the first line will be treated as message and the rest will be treated as details
             let mut log_item = LogItem {
                 timestamp,
                 level: level.trim().to_string(),
                 r#type: "NO_TYPE".to_string(),
                 message: "".to_string(),
                 details: "".to_string(),
+                raw: line.to_string(),
             };
-
+            
+            // if the message starts with [TYPE], extract the type and the actual message; otherwise, treat the whole msg as message
             if msg.trim_start().starts_with('[') {
                 if let Some(end_idx) = msg.find(']') {
                     log_item.r#type = strip_unity_tags(msg.trim_start()[1..end_idx - 1].trim());
