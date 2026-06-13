@@ -4,6 +4,7 @@ use crate::message::{LogLevel, Message};
 use crate::stream::watch_logs_stream;
 use crate::view;
 use iced::{Element, Subscription, Task};
+use regex::RegexBuilder;
 use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
@@ -37,6 +38,8 @@ pub struct VRCLog {
     // 过滤与分页
     filter_text: String,
     filter_level: Option<LogLevel>,
+    filter_regex_enabled: bool,
+    filter_regex_error: Option<String>,
     current_page: usize,
     items_per_page: usize,
     expanded_rows: HashSet<usize>,
@@ -59,6 +62,8 @@ impl Default for VRCLog {
 
             filter_text: String::new(),
             filter_level: None,
+            filter_regex_enabled: false,
+            filter_regex_error: None,
             current_page: 0,
             items_per_page: 50,
             expanded_rows: HashSet::new(),
@@ -92,6 +97,11 @@ impl VRCLog {
             }
             Message::FilterLevelChanged(new_type) => {
                 self.filter_level = new_type;
+                self.current_page = 0;
+                self.apply_filters();
+            }
+            Message::FilterRegexToggled(enabled) => {
+                self.filter_regex_enabled = enabled;
                 self.current_page = 0;
                 self.apply_filters();
             }
@@ -159,11 +169,37 @@ impl VRCLog {
 
     fn apply_filters(&mut self) {
         self.filtered_logs.clear();
-        let filter_lower = self.filter_text.to_lowercase();
+        self.filter_regex_error = None;
+
+        let filter_regex = if self.filter_regex_enabled && !self.filter_text.is_empty() {
+            match RegexBuilder::new(&self.filter_text)
+                .case_insensitive(true)
+                .build()
+            {
+                Ok(regex) => Some(regex),
+                Err(error) => {
+                    self.filter_regex_error = Some(format!("Invalid regex: {}", error));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        let filter_lower = if filter_regex.is_none() {
+            self.filter_text.to_lowercase()
+        } else {
+            String::new()
+        };
 
         for entry in &self.logs {
-            let matches_text = filter_lower.is_empty()
-                || entry.item.raw.to_lowercase().contains(&filter_lower);
+            let matches_text = if self.filter_text.is_empty() {
+                true
+            } else if let Some(regex) = &filter_regex {
+                regex.is_match(&entry.item.raw)
+            } else {
+                entry.item.raw.to_lowercase().contains(&filter_lower)
+            };
 
             let matches_level = match self.filter_level {
                 None | Some(LogLevel::ALL) => true,
@@ -189,6 +225,8 @@ impl VRCLog {
                 &self.filtered_logs,
                 &self.filter_text,
                 &self.filter_level,
+                self.filter_regex_enabled,
+                self.filter_regex_error.as_deref(),
                 self.current_page,
                 self.items_per_page,
                 &self.expanded_rows,

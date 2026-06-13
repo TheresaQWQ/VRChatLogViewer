@@ -5,6 +5,7 @@ pub enum Message {
     NewLog(LogItem),
     FilterTextChanged(String),
     FilterLevelChanged(Option<LogLevel>),
+    FilterRegexToggled(bool),
     ToggleExpand(usize),
     CopyToClipboard(String),
     NextPage,

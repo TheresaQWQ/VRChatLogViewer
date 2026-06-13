@@ -1,10 +1,10 @@
-use crate::log_entry::LogEntry;
 use crate::log_entry::truncate_text;
+use crate::log_entry::LogEntry;
 use crate::message::{LogLevel, Message};
 use iced::widget::{
-    Column, Container, Row, Text, button, container, pick_list, scrollable, text_input,
+    button, container, pick_list, scrollable, text_input, tooltip, Column, Container, Row, Text,
 };
-use iced::{Element, Length, Padding, alignment};
+use iced::{alignment, Element, Length, Padding};
 use std::collections::HashSet;
 
 // 日志主界面
@@ -12,6 +12,8 @@ pub fn view_logs<'a>(
     filtered_logs: &'a [LogEntry],
     filter_text: &'a str,
     filter_level: &'a Option<LogLevel>,
+    filter_regex_enabled: bool,
+    filter_regex_error: Option<&'a str>,
     current_page: usize,
     items_per_page: usize,
     expanded_rows: &'a HashSet<usize>,
@@ -181,9 +183,168 @@ pub fn view_logs<'a>(
         .spacing(4);
 
     // 顶部过滤器和设置按钮
-    let filter_input = text_input("Search by message...", filter_text)
+    let filter_placeholder = if filter_regex_enabled {
+        "Search by regex..."
+    } else {
+        "Search by message..."
+    };
+
+    let has_regex_error = filter_regex_error.is_some();
+
+    let filter_input = text_input(filter_placeholder, filter_text)
         .on_input(Message::FilterTextChanged)
-        .padding(8);
+        .padding([8, 10])
+        .style(|theme, status| {
+            let base = iced::widget::text_input::default(theme, status);
+
+            iced::widget::text_input::Style {
+                background: iced::Background::Color(iced::Color::TRANSPARENT),
+                border: iced::Border {
+                    radius: 0.0.into(),
+                    width: 0.0,
+                    color: iced::Color::TRANSPARENT,
+                },
+                ..base
+            }
+        });
+
+    let search_input = filter_input.width(Length::Fill);
+
+    let regex_control_label = if has_regex_error { "!" } else { ".*" };
+    let regex_tooltip_text = if let Some(error) = filter_regex_error {
+        error
+    } else if filter_regex_enabled {
+        "Regex search enabled"
+    } else {
+        "Regex search disabled"
+    };
+
+    let regex_control_text_color = if filter_regex_enabled || has_regex_error {
+        iced::Color::WHITE
+    } else {
+        iced::Color::from_rgb(0.78, 0.78, 0.78)
+    };
+
+    let regex_control_content = Container::new(
+        Text::new(regex_control_label)
+            .size(14)
+            .color(regex_control_text_color),
+    )
+    .width(Length::Fixed(40.0))
+    .height(Length::Fixed(30.0))
+    .center_x(Length::Fixed(40.0))
+    .center_y(Length::Fixed(30.0));
+
+    let regex_control_button = button(regex_control_content)
+        .padding(0)
+        .width(Length::Fixed(40.0))
+        .height(Length::Fixed(30.0))
+        .on_press(Message::FilterRegexToggled(!filter_regex_enabled))
+        .style(move |_theme, status| {
+            let base_bg = if has_regex_error {
+                iced::Color::from_rgb(0.78, 0.18, 0.18)
+            } else if filter_regex_enabled {
+                iced::Color::from_rgb(0.18, 0.42, 0.78)
+            } else {
+                iced::Color::from_rgba(0.5, 0.5, 0.5, 0.16)
+            };
+
+            let background = match status {
+                button::Status::Hovered => {
+                    if has_regex_error {
+                        iced::Color::from_rgb(0.88, 0.24, 0.24)
+                    } else if filter_regex_enabled {
+                        iced::Color::from_rgb(0.24, 0.5, 0.9)
+                    } else {
+                        iced::Color::from_rgba(0.5, 0.5, 0.5, 0.26)
+                    }
+                }
+                button::Status::Pressed => {
+                    if has_regex_error {
+                        iced::Color::from_rgb(0.62, 0.12, 0.12)
+                    } else if filter_regex_enabled {
+                        iced::Color::from_rgb(0.12, 0.3, 0.62)
+                    } else {
+                        iced::Color::from_rgba(0.5, 0.5, 0.5, 0.34)
+                    }
+                }
+                _ => base_bg,
+            };
+
+            button::Style {
+                background: Some(iced::Background::Color(background)),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.16),
+                    width: 1.0,
+                },
+                text_color: regex_control_text_color,
+                ..Default::default()
+            }
+        });
+
+    let regex_tooltip = Container::new(
+        Text::new(regex_tooltip_text)
+            .size(12)
+            .width(Length::Fixed(360.0))
+            .color(iced::Color::WHITE),
+    )
+    .padding(10)
+    .style(|_theme| container::Style {
+        background: Some(iced::Background::Color(iced::Color::from_rgba(
+            0.08, 0.08, 0.08, 0.95,
+        ))),
+        border: iced::Border {
+            radius: 4.0.into(),
+            color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.18),
+            width: 1.0,
+        },
+        ..Default::default()
+    });
+
+    let regex_control: Element<Message> = tooltip(
+        regex_control_button,
+        regex_tooltip,
+        tooltip::Position::Bottom,
+    )
+    .gap(6)
+    .into();
+
+    let search_box = Container::new(
+        Row::new()
+            .push(search_input)
+            .push(regex_control)
+            .spacing(0)
+            .align_y(alignment::Vertical::Center),
+    )
+    .width(Length::FillPortion(3))
+    .padding(Padding {
+        top: 2.0,
+        right: 3.0,
+        bottom: 2.0,
+        left: 0.0,
+    })
+    .style(move |_theme| {
+        let border_color = if has_regex_error {
+            iced::Color::from_rgb(0.78, 0.18, 0.18)
+        } else if filter_regex_enabled {
+            iced::Color::from_rgb(0.18, 0.42, 0.78)
+        } else {
+            iced::Color::from_rgba(0.5, 0.5, 0.5, 0.42)
+        };
+
+        container::Style {
+            background: Some(iced::Background::Color(iced::Color::from_rgba(
+                0.5, 0.5, 0.5, 0.08,
+            ))),
+            border: iced::Border {
+                radius: 4.0.into(),
+                color: border_color,
+                width: 1.0,
+            },
+            ..Default::default()
+        }
+    });
 
     let filter_type = pick_list(LogLevel::all_levels(), filter_level.as_ref(), |t| {
         Message::FilterLevelChanged(Some(t))
@@ -196,7 +357,7 @@ pub fn view_logs<'a>(
         .padding(8);
 
     let filters = Row::new()
-        .push(filter_input.width(Length::FillPortion(3)))
+        .push(search_box)
         .push(filter_type.width(Length::FillPortion(1)))
         .push(settings_btn)
         .spacing(15)
